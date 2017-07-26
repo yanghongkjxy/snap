@@ -302,13 +302,6 @@ func (a *availablePlugin) Kill(r string) error {
 // CheckHealth checks the health of a plugin and updates
 // a.failedHealthChecks
 func (a *availablePlugin) CheckHealth() {
-	if a.IsRemote() {
-		runnerLog.WithFields(log.Fields{
-			"_module": "control-aplugin",
-			"_block":  "check-health",
-		}).Debug(fmt.Sprintf("bypassing check-health on standalone plugin"))
-		return
-	}
 	go func() {
 		a.healthChan <- a.client.Ping()
 	}()
@@ -555,7 +548,7 @@ func (ap *availablePlugins) streamMetrics(
 }
 
 func (ap *availablePlugins) publishMetrics(metrics []core.Metric, pluginName string, pluginVersion int, config map[string]ctypes.ConfigValue, taskID string) []error {
-	key := strings.Join([]string{plugin.PublisherPluginType.String(), pluginName, strconv.Itoa(pluginVersion)}, core.Separator)
+	key := fmt.Sprintf("%s"+core.Separator+"%s"+core.Separator+"%d", plugin.PublisherPluginType.String(), pluginName, pluginVersion)
 	pool, serr := ap.getPool(key)
 	if serr != nil {
 		return []error{serr}
@@ -588,7 +581,7 @@ func (ap *availablePlugins) publishMetrics(metrics []core.Metric, pluginName str
 
 func (ap *availablePlugins) processMetrics(metrics []core.Metric, pluginName string, pluginVersion int, config map[string]ctypes.ConfigValue, taskID string) ([]core.Metric, []error) {
 	var errs []error
-	key := strings.Join([]string{plugin.ProcessorPluginType.String(), pluginName, strconv.Itoa(pluginVersion)}, core.Separator)
+	key := fmt.Sprintf("%s"+core.Separator+"%s"+core.Separator+"%d", plugin.ProcessorPluginType.String(), pluginName, pluginVersion)
 	pool, serr := ap.getPool(key)
 	if serr != nil {
 		errs = append(errs, serr)
@@ -625,7 +618,7 @@ func (ap *availablePlugins) findLatestPool(pType, name string) (strategy.Pool, s
 	var latest strategy.Pool
 	for key, pool := range ap.table {
 		tnv := strings.Split(key, core.Separator)
-		if tnv[0] == pType && tnv[1] == name {
+		if tnv[0] == pType && tnv[1] == name && pool.Count() > 0 {
 			latest = pool
 			break
 		}
@@ -633,7 +626,7 @@ func (ap *availablePlugins) findLatestPool(pType, name string) (strategy.Pool, s
 	if latest != nil {
 		for key, pool := range ap.table {
 			tnv := strings.Split(key, core.Separator)
-			if tnv[0] == pType && tnv[1] == name && pool.Version() > latest.Version() {
+			if tnv[0] == pType && tnv[1] == name && pool.Version() > latest.Version() && pool.Count() > 0 {
 				latest = pool
 			}
 		}

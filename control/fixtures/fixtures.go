@@ -22,6 +22,7 @@ package fixtures
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/intelsdi-x/snap/core"
@@ -38,8 +39,8 @@ var (
 	PluginNameMock2 = "snap-plugin-collector-mock2"
 	PluginPathMock2 = helper.PluginFilePath(PluginNameMock2)
 
-	PluginNameStreamRand1 = "snap-plugin-stream-collector-rand1"
-	PluginPathStreamRand1 = helper.PluginFilePath(PluginNameStreamRand1)
+	PluginNameStreamingRand1 = "snap-plugin-streaming-collector-rand1"
+	PluginPathStreamingRand1 = helper.PluginFilePath(PluginNameStreamingRand1)
 
 	PluginNameMock2Grpc = "snap-plugin-collector-mock2-grpc"
 	PluginPathMock2Grpc = helper.PluginFilePath(PluginNameMock2Grpc)
@@ -142,6 +143,9 @@ func (m MockPlugin) Name() string                  { return m.name }
 func (m MockPlugin) TypeName() string              { return m.pluginType.String() }
 func (m MockPlugin) Version() int                  { return m.ver }
 func (m MockPlugin) Config() *cdata.ConfigDataNode { return m.config }
+func (m MockPlugin) Key() string {
+	return fmt.Sprintf("%s"+core.Separator+"%s"+core.Separator+"%d", m.pluginType.String(), m.name, m.ver)
+}
 
 type MockRequestedMetric struct {
 	namespace core.Namespace

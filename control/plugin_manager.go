@@ -65,6 +65,8 @@ var (
 	ErrPluginNotFound = errors.New("plugin not found")
 	// ErrPluginAlreadyLoaded - error message when a plugin is already loaded
 	ErrPluginAlreadyLoaded = errors.New("plugin is already loaded")
+	// ErrPluginCannotBeUnloaded - error message when a plugin cannot be unloaded because is already in use by running task(s)
+	ErrPluginCannotBeUnloaded = errors.New("Plugin is used by running task. Stop the task to be able to unload the plugin")
 	// ErrPluginNotInLoadedState - error message when a plugin must ne in a loaded state
 	ErrPluginNotInLoadedState = errors.New("Plugin must be in a LoadedState")
 
@@ -72,6 +74,15 @@ var (
 
 	defaultManagerOpts = []pluginManagerOpt{optDefaultManagerSecurity()}
 )
+
+func errorPluginCannotBeUnloaded(impactedTaskIDs []string) error {
+	var impactedTasks string
+
+	for _, id := range impactedTaskIDs {
+		impactedTasks += fmt.Sprintf("\n%s", id)
+	}
+	return fmt.Errorf("%s:%s", ErrPluginCannotBeUnloaded, impactedTasks)
+}
 
 type pluginState string
 
@@ -534,7 +545,9 @@ func (p *pluginManager) LoadPlugin(details *pluginDetails, emitter gomit.Emitter
 			}
 
 			colClient := ap.client.(client.PluginCollectorClient)
-			defer ap.client.(client.PluginCollectorClient).Close()
+			if !ap.isRemote {
+				defer ap.client.(client.PluginCollectorClient).Close()
+			}
 
 			cfg := plugin.ConfigType{
 				ConfigDataNode: cfgNode,
@@ -642,6 +655,27 @@ func (p *pluginManager) LoadPlugin(details *pluginDetails, emitter gomit.Emitter
 			}).Error("load plugin error while adding loaded plugin to load plugins collection")
 			resultChan <- result{nil, aErr}
 		}
+		if ap.isRemote && aErr == nil {
+			// monitor standalone plugins. Unload them from the plugin catalog and metrics list
+			// when we detect they are no longer online.
+			go func() {
+				defer ap.client.(client.PluginCollectorClient).Close()
+				for {
+					time.Sleep(5 * time.Second)
+					go ap.CheckHealth()
+					if ap.failedHealthChecks > 3 {
+						p.UnloadPlugin(lPlugin)
+						return
+					}
+					if _, err := p.loadedPlugins.get(lPlugin.Key()); err != nil {
+						// prevent leaking routine when plugin is unloaded normally
+						return
+					}
+
+				}
+			}()
+
+		}
 		resultChan <- result{lPlugin, nil}
 		return
 	}()
@@ -687,6 +721,8 @@ func (p *pluginManager) UnloadPlugin(pl core.Plugin) (*loadedPlugin, serror.Snap
 		"plugin-version": plugin.Version(),
 		"plugin-path":    plugin.Details.Path,
 	}).Debugf("Removing plugin")
+
+	// remove plugin binary from tempDirPath (do not apply for remote plugin)
 	if strings.Contains(plugin.Details.Path, p.tempDirPath) {
 		if err := os.RemoveAll(filepath.Dir(plugin.Details.Path)); err != nil {
 			pmLogger.WithFields(log.Fields{
@@ -713,9 +749,10 @@ func (p *pluginManager) UnloadPlugin(pl core.Plugin) (*loadedPlugin, serror.Snap
 		}).Debug("Nothing to delete as temp path is empty")
 	}
 
+	// remove plugin key
 	p.loadedPlugins.remove(plugin.Key())
 
-	// Remove any metrics from the catalog if this was a collector
+	// remove any metrics from the catalog if this was a collector
 	if plugin.TypeName() == core.CollectorPluginType.String() || plugin.TypeName() == core.StreamingCollectorPluginType.String() {
 		p.metricCatalog.RmUnloadedPluginMetrics(plugin)
 	}
